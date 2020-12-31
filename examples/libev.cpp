@@ -11,10 +11,72 @@
  *  Dependencies
  */
 #include <ev.h>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <iostream>
 #include <amqpcpp.h>
 #include <amqpcpp/libev.h>
 #include <openssl/ssl.h>
 #include <openssl/opensslv.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/pkcs12.h>
+
+
+int getp12(std::string filename, std::string pass)
+{
+    FILE *fp;
+    EVP_PKEY *pkey;
+    X509 *cert;
+    STACK_OF(X509) *ca = NULL;
+    PKCS12 *p12;
+    int i;
+    
+    OpenSSL_add_all_algorithms();
+    ERR_load_crypto_strings();
+    if (!(fp = fopen(filename.c_str(), "rb"))) {
+        fprintf(stderr, "Error opening file %s\n", filename.c_str());
+        return -1;
+    }
+    p12 = d2i_PKCS12_fp(fp, NULL);
+    fclose (fp);
+    if (!p12) {
+        fprintf(stderr, "Error reading PKCS#12 file\n");
+        ERR_print_errors_fp(stderr);
+        return -1;
+    }
+    if (!PKCS12_parse(p12, pass.c_str(), &pkey, &cert, &ca)) {
+        fprintf(stderr, "Error parsing PKCS#12 file\n");
+        ERR_print_errors_fp(stderr);
+        return -1;
+    }
+    PKCS12_free(p12);
+    if (!(fp = fopen("foo.pem", "w"))) {
+        fprintf(stderr, "Error opening out file\n");
+        return -1;
+    }
+    if (pkey) {
+        fprintf(fp, "***Private Key***\n");
+        PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL);
+    }
+    if (cert) {
+        fprintf(fp, "***User Certificate***\n");
+        PEM_write_X509_AUX(fp, cert);
+    }
+    if (ca && sk_X509_num(ca)) {
+        fprintf(fp, "***Other Certificates***\n");
+        for (i = 0; i < sk_X509_num(ca); i++) 
+            PEM_write_X509_AUX(fp, sk_X509_value(ca, i));
+    }
+
+    sk_X509_pop_free(ca, X509_free);
+    X509_free(cert);
+    EVP_PKEY_free(pkey);
+
+    fclose(fp);
+    return 0;
+}
 
 /**
  *  Custom handler
@@ -67,6 +129,25 @@ private:
     {
         std::cout << "detached" << std::endl;
     }
+
+    virtual bool onSSLCreated(AMQP::TcpConnection *connection, const SSL *ssl) override
+    {
+        std::cout<<"onSSLCreated"<<std::endl;
+        // @todo
+        //  add your own implementation, for example by reading out the
+        //  certificate and check if it is indeed yours
+        return true;
+    }
+
+    virtual bool onSecured(AMQP::TcpConnection *connection, const SSL *ssl) override
+    {
+        std::cout<<"onSecured"<<std::endl;
+        // @todo
+        //  add your own implementation, for example by reading out the
+        //  certificate and check if it is indeed yours
+        return true;
+    }
+
     
     
 public:
@@ -156,8 +237,13 @@ public:
  *  Main program
  *  @return int
  */
-int main()
+int main(int argc, char **argv)
 {
+    
+    //load the p12
+    getp12(argv[1],argv[2]);
+
+
     // access to the event loop
     auto *loop = EV_DEFAULT;
     
@@ -172,7 +258,7 @@ int main()
 #endif
 
     // make a connection
-    AMQP::Address address("amqp://guest:guest@localhost/");
+    AMQP::Address address("amqps://guest:guest@ec2-3-121-224-144.eu-central-1.compute.amazonaws.com/");
 //    AMQP::Address address("amqps://guest:guest@localhost/");
     AMQP::TcpConnection connection(&handler, address);
     

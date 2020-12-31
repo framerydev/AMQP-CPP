@@ -139,6 +139,12 @@ private:
         return _handler && _handler->onSecured(this, ssl);
     }
 
+    virtual bool onSSLCreated(TcpState *state, const SSL *ssl) override
+    {
+        // pass on to user-space
+        return _handler && _handler->onSSLCreated(this, ssl);
+    }
+
     /**
      *  Method to be called when data was received
      *  @param  state

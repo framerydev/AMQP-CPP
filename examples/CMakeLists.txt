@@ -18,7 +18,7 @@ add_executable(amqpcpp_libev_example libev.cpp)
 
 add_dependencies(amqpcpp_libev_example amqpcpp)
 
-target_link_libraries(amqpcpp_libev_example amqpcpp ev pthread dl ssl)
+target_link_libraries(amqpcpp_libev_example amqpcpp ev pthread dl ssl crypto)
 
 
 ###################################

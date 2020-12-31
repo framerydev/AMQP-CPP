@@ -126,6 +126,9 @@ public:
         // use the default directories for verifying certificates
         OpenSSL::SSL_CTX_set_default_verify_paths(_ctx);
 
+        // allow custom SSL setup
+        if (!_parent->onSSLCreated(this, _ssl)) throw std::runtime_error("failed to initialize the ssl socket");
+
         // we will be using the ssl context as a client
         OpenSSL::SSL_set_connect_state(_ssl);
         

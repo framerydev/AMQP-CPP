@@ -40,18 +40,32 @@ public:
      */
     virtual ~TcpParent() = default;
 
-
     /**
      *  Method that is called when the TCP connection has been established
      *  @param  state
      */
     virtual void onConnected(TcpState *state) = 0;
 
+
+     /**
+     *  Method that is called once an SSL structure has been created, after a TCP connection
+     *  has been set up and before the TLS handshake occurs.  This method allows you to
+     *  initialize the SSL structure with any certificates, keys or callbacks which may be
+     *  required for successful operation.  This method is only called for secure connections
+     *  (connection with an amqps:// address).
+     *
+     *  @param  state      
+     *  @param  ssl             Pointer to the SSL structure that can be initialized
+     *  @return bool            True to proceed, false to indicate failure
+     */
+    virtual bool onSSLCreated(TcpState *state, const SSL *ssl) = 0;
+
     /**
      *  Method that is called when the connection is secured
      *  @param  state
      *  @param  ssl
      *  @return bool
+     *
      */
     virtual bool onSecured(TcpState *state, const SSL *ssl) = 0;
 
