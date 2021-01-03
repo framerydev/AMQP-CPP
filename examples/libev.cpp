@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <amqpcpp.h>
 #include <amqpcpp/libev.h>
 #include <openssl/ssl.h>
@@ -24,12 +25,12 @@
 #include <openssl/pkcs12.h>
 
 
-int getp12(std::string filename, std::string pass)
+int getp12(std::string filename, std::string pass, EVP_PKEY **pkey, X509 **cert, X509 **ca)
 {
     FILE *fp;
-    EVP_PKEY *pkey;
-    X509 *cert;
-    STACK_OF(X509) *ca = NULL;
+    STACK_OF(X509) *cas = NULL;
+    
+    
     PKCS12 *p12;
     int i;
     
@@ -46,35 +47,43 @@ int getp12(std::string filename, std::string pass)
         ERR_print_errors_fp(stderr);
         return -1;
     }
-    if (!PKCS12_parse(p12, pass.c_str(), &pkey, &cert, &ca)) {
+    if (!PKCS12_parse(p12, pass.c_str(), pkey, cert, &cas)) {
         fprintf(stderr, "Error parsing PKCS#12 file\n");
         ERR_print_errors_fp(stderr);
         return -1;
     }
     PKCS12_free(p12);
-    if (!(fp = fopen("foo.pem", "w"))) {
-        fprintf(stderr, "Error opening out file\n");
-        return -1;
+
+/* No need to write to files!
+    if (*pkey) {
+        fp = fopen("key.pem", "w");
+        PEM_write_PrivateKey(fp, *pkey, NULL, NULL, 0, NULL, NULL);
+        fclose(fp);    
     }
-    if (pkey) {
-        fprintf(fp, "***Private Key***\n");
-        PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL);
-    }
-    if (cert) {
-        fprintf(fp, "***User Certificate***\n");
-        PEM_write_X509_AUX(fp, cert);
-    }
-    if (ca && sk_X509_num(ca)) {
-        fprintf(fp, "***Other Certificates***\n");
-        for (i = 0; i < sk_X509_num(ca); i++) 
-            PEM_write_X509_AUX(fp, sk_X509_value(ca, i));
+    if (*cert) {
+        fp = fopen("cert.pem", "w");
+        PEM_write_X509_AUX(fp, *cert);
+        fclose(fp); 
     }
 
-    sk_X509_pop_free(ca, X509_free);
-    X509_free(cert);
-    EVP_PKEY_free(pkey);
+    if (cas && sk_X509_num(cas)) {
+        fp = fopen("chain.pem", "w");
+        for (i = 0; i < sk_X509_num(cas); i++) 
+            PEM_write_X509_AUX(fp, sk_X509_value(cas, i));
+        fclose(fp); 
+    }
 
-    fclose(fp);
+*/
+    //ca=sk_X509_value(cas, 0);
+
+    
+    
+
+    sk_X509_pop_free(cas, X509_free);
+    //X509_free(cert);
+    //EVP_PKEY_free(pkey);
+
+    
     return 0;
 }
 
@@ -133,9 +142,10 @@ private:
     virtual bool onSSLCreated(AMQP::TcpConnection *connection, const SSL *ssl) override
     {
         std::cout<<"onSSLCreated"<<std::endl;
-        // @todo
-        //  add your own implementation, for example by reading out the
-        //  certificate and check if it is indeed yours
+        std::cout << "load pkey=" << SSL_use_PrivateKey((SSL*)ssl, mpkey) << std::endl;
+        std::cout << "load cert=" << SSL_use_certificate((SSL*)ssl, mcert) << std::endl;
+        //std::cout << "load ca=" <<SSL_add0_chain_cert((SSL *)ssl, mca) << std::endl;
+
         return true;
     }
 
@@ -148,14 +158,21 @@ private:
         return true;
     }
 
-    
+    EVP_PKEY *mpkey;
+    X509 *mcert;
+    //STACK_OF(X509) *ca;
+    X509 *mca;
     
 public:
     /**
      *  Constructor
      *  @param  ev_loop
      */
-    MyHandler(struct ev_loop *loop) : AMQP::LibEvHandler(loop) {}
+    MyHandler(struct ev_loop *loop, EVP_PKEY *pkey, X509 *cert, X509 *ca) : AMQP::LibEvHandler(loop) {
+        mpkey=pkey;
+        mcert=cert;
+        mca=ca;
+    }
 
     /**
      *  Destructor
@@ -239,16 +256,19 @@ public:
  */
 int main(int argc, char **argv)
 {
-    
-    //load the p12
-    getp12(argv[1],argv[2]);
+    EVP_PKEY *pkey = NULL;
+    X509 *cert = NULL;
+    X509 *ca = NULL;
+    //STACK_OF(X509) *ca = NULL;
 
+    //load the p12
+    getp12(argv[1],argv[2], &pkey, &cert, &ca);
 
     // access to the event loop
     auto *loop = EV_DEFAULT;
     
     // handler for libev
-    MyHandler handler(loop);
+    MyHandler handler(loop, pkey, cert, ca);
 
     // init the SSL library
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -258,7 +278,7 @@ int main(int argc, char **argv)
 #endif
 
     // make a connection
-    AMQP::Address address("amqps://guest:guest@ec2-3-121-224-144.eu-central-1.compute.amazonaws.com/");
+    AMQP::Address address("amqps://ec2-3-121-224-144.eu-central-1.compute.amazonaws.com/");
 //    AMQP::Address address("amqps://guest:guest@localhost/");
     AMQP::TcpConnection connection(&handler, address);
     

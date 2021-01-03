@@ -16,7 +16,6 @@
  *  Includes
  */
 #include <type_traits>
-
 /**
  *  Set up namespace
  */
@@ -133,6 +132,9 @@ public:
 
             // set data to the start of the hostname
             data = at + 1;
+        } else {
+            //EXTERNAL login type. No implicit guest login supported atm.
+            _login = Login(LOGIN_EXTERNAL);
         }
 
         // find out where the vhost is set (starts with a slash)
