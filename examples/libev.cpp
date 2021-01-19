@@ -16,6 +16,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include <amqpcpp.h>
 #include <amqpcpp/libev.h>
 #include <openssl/ssl.h>
@@ -25,7 +26,7 @@
 #include <openssl/pkcs12.h>
 
 
-int getp12(std::string filename, std::string pass, EVP_PKEY **pkey, X509 **cert, X509 **ca)
+int getp12(std::string filename, std::string pass, EVP_PKEY **pkey, X509 **cert, std::vector<X509 *> &ca)
 {
     FILE *fp;
     STACK_OF(X509) *cas = NULL;
@@ -54,32 +55,17 @@ int getp12(std::string filename, std::string pass, EVP_PKEY **pkey, X509 **cert,
     }
     PKCS12_free(p12);
 
-/* No need to write to files!
-    if (*pkey) {
-        fp = fopen("key.pem", "w");
-        PEM_write_PrivateKey(fp, *pkey, NULL, NULL, 0, NULL, NULL);
-        fclose(fp);    
-    }
-    if (*cert) {
-        fp = fopen("cert.pem", "w");
-        PEM_write_X509_AUX(fp, *cert);
-        fclose(fp); 
-    }
-
     if (cas && sk_X509_num(cas)) {
-        fp = fopen("chain.pem", "w");
-        for (i = 0; i < sk_X509_num(cas); i++) 
-            PEM_write_X509_AUX(fp, sk_X509_value(cas, i));
-        fclose(fp); 
+        
+        for (i = 0; i < sk_X509_num(cas); i++) { 
+            std::cout<<"appending CA cert "<<i<<std::endl;
+            ca.push_back(sk_X509_value(cas, i));
+        }
+        
     }
-
-*/
-    //ca=sk_X509_value(cas, 0);
-
-    
     
 
-    sk_X509_pop_free(cas, X509_free);
+    //sk_X509_pop_free(cas, X509_free);
     //X509_free(cert);
     //EVP_PKEY_free(pkey);
 
@@ -142,9 +128,18 @@ private:
     virtual bool onSSLCreated(AMQP::TcpConnection *connection, const SSL *ssl) override
     {
         std::cout<<"onSSLCreated"<<std::endl;
+        mconnection=connection;
+        mssl=(SSL*)ssl;
         std::cout << "load pkey=" << SSL_use_PrivateKey((SSL*)ssl, mpkey) << std::endl;
         std::cout << "load cert=" << SSL_use_certificate((SSL*)ssl, mcert) << std::endl;
+        std::cout<<"len "<< mca.size()<< std::endl;
+        for (auto it = begin(mca); it != end(mca); ++it) {
+            std::cout << "load ca=" << SSL_add0_chain_cert((SSL *)ssl, *it) << std::endl;;
+        }
         //std::cout << "load ca=" <<SSL_add0_chain_cert((SSL *)ssl, mca) << std::endl;
+        SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_CLIENT_ONCE,
+                    verify_cb);
 
         return true;
     }
@@ -158,20 +153,24 @@ private:
         return true;
     }
 
+    static int verify_cb(int ok, X509_STORE_CTX *ctx) {
+        std::cout<<"Certificate verification failed"<<std::endl;
+    }
+
     EVP_PKEY *mpkey;
     X509 *mcert;
-    //STACK_OF(X509) *ca;
-    X509 *mca;
+    std::vector<X509*> mca;
+    AMQP::TcpConnection * mconnection;
+    SSL *mssl;
     
 public:
     /**
      *  Constructor
      *  @param  ev_loop
      */
-    MyHandler(struct ev_loop *loop, EVP_PKEY *pkey, X509 *cert, X509 *ca) : AMQP::LibEvHandler(loop) {
-        mpkey=pkey;
-        mcert=cert;
-        mca=ca;
+    MyHandler(struct ev_loop *loop, EVP_PKEY *pkey, X509 *cert, std::vector<X509*> &ca) : AMQP::LibEvHandler(loop),
+     mpkey(pkey), mcert(cert), mca(std::move(ca)) {
+
     }
 
     /**
@@ -179,6 +178,8 @@ public:
      */
     virtual ~MyHandler() = default;
 };
+
+
 
 /**
  *  Class that runs a timer
@@ -258,11 +259,17 @@ int main(int argc, char **argv)
 {
     EVP_PKEY *pkey = NULL;
     X509 *cert = NULL;
-    X509 *ca = NULL;
-    //STACK_OF(X509) *ca = NULL;
+    std::vector<X509 *> ca;
+
+        // init the SSL library
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    SSL_library_init();
+#else
+    OPENSSL_init_ssl(0, NULL);
+#endif
 
     //load the p12
-    getp12(argv[1],argv[2], &pkey, &cert, &ca);
+    getp12(argv[1],argv[2], &pkey, &cert, ca);
 
     // access to the event loop
     auto *loop = EV_DEFAULT;
@@ -270,12 +277,7 @@ int main(int argc, char **argv)
     // handler for libev
     MyHandler handler(loop, pkey, cert, ca);
 
-    // init the SSL library
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_library_init();
-#else
-    OPENSSL_init_ssl(0, NULL);
-#endif
+
 
     // make a connection
     AMQP::Address address("amqps://ec2-3-121-224-144.eu-central-1.compute.amazonaws.com/");
